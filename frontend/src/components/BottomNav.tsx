@@ -11,8 +11,8 @@ const navItems = [
 
 function BottomNav() {
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 h-[60px] bg-mv-surface border-t border-mv-border safe-bottom">
-      <div className="flex items-center justify-around h-full max-w-lg mx-auto">
+    <nav className="fixed bottom-0 left-0 right-0 z-40 h-[calc(60px+env(safe-area-inset-bottom,0px))] pb-[env(safe-area-inset-bottom,0px)] bg-mv-surface border-t border-mv-border">
+      <div className="flex items-center justify-around h-[60px] max-w-lg mx-auto">
         {navItems.map((item) => (
           <NavLink
             key={item.to}

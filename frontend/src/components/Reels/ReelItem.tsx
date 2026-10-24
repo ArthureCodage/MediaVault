@@ -27,13 +27,15 @@ export const ReelItem: React.FC<ReelItemProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scrubberRef = useRef<HTMLDivElement>(null);
+  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(media.duration || 0);
   const [progress, setProgress] = useState(0);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [showHeartAnim, setShowHeartAnim] = useState(false);
-  const [showPlayIcon, setShowPlayIcon] = useState(false);
+  const [showCenterControls, setShowCenterControls] = useState(false);
   const [seekFeedback, setSeekFeedback] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
   const [fitMode, setFitMode] = useState<'contain' | 'cover'>('contain');
@@ -54,16 +56,25 @@ export const ReelItem: React.FC<ReelItemProps> = ({
       const playPromise = video.play();
       if (playPromise !== undefined) {
         playPromise
-          .then(() => setIsPlaying(true))
+          .then(() => {
+            setIsPlaying(true);
+            setShowCenterControls(false);
+          })
           .catch(() => {
             video.muted = true;
-            video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+            video.play()
+              .then(() => {
+                setIsPlaying(true);
+                setShowCenterControls(false);
+              })
+              .catch(() => setIsPlaying(false));
           });
       }
     } else {
       video.pause();
       video.currentTime = 0;
       setIsPlaying(false);
+      setShowCenterControls(false);
       setProgress(0);
       setCurrentTime(0);
     }
@@ -87,21 +98,39 @@ export const ReelItem: React.FC<ReelItemProps> = ({
     setProgress((video.currentTime / dur) * 100);
   };
 
-  // Relative Seek (-5s, +5s, etc.)
-  const seekRelative = useCallback((seconds: number) => {
+  // Relative Seek (-5s, +5s, -10s, +10s, etc.)
+  const seekRelative = useCallback(
+    (seconds: number) => {
+      const video = videoRef.current;
+      if (!video) return;
+      const dur = video.duration || media.duration || 1;
+      const target = Math.max(0, Math.min(dur, video.currentTime + seconds));
+      video.currentTime = target;
+      setCurrentTime(target);
+      setProgress((target / dur) * 100);
+
+      setSeekFeedback(seconds < 0 ? `⏪ ${seconds}s` : `⏩ +${seconds}s`);
+      setTimeout(() => setSeekFeedback(null), 700);
+    },
+    [media.duration],
+  );
+
+  // Play / Pause toggle helper
+  const togglePlay = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
-    const dur = video.duration || media.duration || 1;
-    const target = Math.max(0, Math.min(dur, video.currentTime + seconds));
-    video.currentTime = target;
-    setCurrentTime(target);
-    setProgress((target / dur) * 100);
+    if (video.paused) {
+      video.play();
+      setIsPlaying(true);
+      setShowCenterControls(false);
+    } else {
+      video.pause();
+      setIsPlaying(false);
+      setShowCenterControls(true);
+    }
+  }, []);
 
-    setSeekFeedback(seconds < 0 ? `⏪ ${seconds}s` : `⏩ +${seconds}s`);
-    setTimeout(() => setSeekFeedback(null), 700);
-  }, [media.duration]);
-
-  // Keyboard navigation for active item (Left/Right arrow seek)
+  // Keyboard navigation for active item (Left/Right arrow seek, Space play/pause)
   useEffect(() => {
     if (!isActive || !isVideo) return;
 
@@ -114,25 +143,15 @@ export const ReelItem: React.FC<ReelItemProps> = ({
         seekRelative(5);
       } else if (e.key === ' ') {
         e.preventDefault();
-        if (videoRef.current) {
-          if (videoRef.current.paused) {
-            videoRef.current.play();
-            setIsPlaying(true);
-          } else {
-            videoRef.current.pause();
-            setIsPlaying(false);
-          }
-          setShowPlayIcon(true);
-          setTimeout(() => setShowPlayIcon(false), 500);
-        }
+        togglePlay();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isActive, isVideo, seekRelative]);
+  }, [isActive, isVideo, seekRelative, togglePlay]);
 
-  // Screen click & Double-tap handler (Left = Rewind, Right = Fast-forward, Center = Like)
+  // Screen click & Double-tap handler (Left = Rewind 5s, Right = Fast-forward 5s, Center = Like)
   const handleScreenClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -145,13 +164,10 @@ export const ReelItem: React.FC<ReelItemProps> = ({
       if (now - lastTapRef.current.time < DOUBLE_TAP_DELAY) {
         // Double Tap detected!
         if (clickX < width * 0.35 && isVideo) {
-          // Double-tap on Left side → Rewind 5s
           seekRelative(-5);
         } else if (clickX > width * 0.65 && isVideo) {
-          // Double-tap on Right side → Fast-forward 5s
           seekRelative(5);
         } else {
-          // Double-tap in Center → Like ❤️
           setShowHeartAnim(true);
           setTimeout(() => setShowHeartAnim(false), 900);
           if (!media.is_favorite) {
@@ -162,21 +178,13 @@ export const ReelItem: React.FC<ReelItemProps> = ({
       } else {
         lastTapRef.current = { time: now, x: clickX };
 
-        // Single tap → Play / Pause
-        if (isVideo && videoRef.current) {
-          if (videoRef.current.paused) {
-            videoRef.current.play();
-            setIsPlaying(true);
-          } else {
-            videoRef.current.pause();
-            setIsPlaying(false);
-          }
-          setShowPlayIcon(true);
-          setTimeout(() => setShowPlayIcon(false), 600);
+        // Single tap → Toggle play/pause & show center HUD
+        if (isVideo) {
+          togglePlay();
         }
       }
     },
-    [isVideo, media.is_favorite, media.uuid, onToggleFavorite, seekRelative],
+    [isVideo, media.is_favorite, media.uuid, onToggleFavorite, seekRelative, togglePlay],
   );
 
   // Scrubber Drag & Click Handling
@@ -297,25 +305,54 @@ export const ReelItem: React.FC<ReelItemProps> = ({
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1.1, opacity: 1 }}
             exit={{ scale: 1.3, opacity: 0 }}
-            className="absolute z-30 pointer-events-none bg-black/70 backdrop-blur-md px-5 py-2.5 rounded-full border border-white/20 text-white font-bold text-lg shadow-2xl flex items-center gap-2"
+            className="absolute z-30 pointer-events-none bg-black/75 backdrop-blur-md px-5 py-2.5 rounded-full border border-white/20 text-white font-bold text-lg shadow-2xl flex items-center gap-2"
           >
             <span>{seekFeedback}</span>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Play / Pause flash indicator */}
+      {/* Center Screen Overlay Controls (Rewind 10s | Play/Pause | Fast-Forward 10s) */}
       <AnimatePresence>
-        {showPlayIcon && (
+        {isVideo && (!isPlaying || showCenterControls) && (
           <motion.div
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 0.9 }}
-            exit={{ scale: 1.2, opacity: 0 }}
-            className="absolute z-20 pointer-events-none bg-black/60 rounded-full p-4 backdrop-blur-sm"
+            initial={{ opacity: 0, scale: 0.85 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.85 }}
+            transition={{ duration: 0.15 }}
+            className="absolute z-25 flex items-center justify-center gap-6 pointer-events-auto"
+            onClick={(e) => e.stopPropagation()}
           >
-            <span className="text-4xl text-white">
-              {isPlaying ? '▶' : '⏸'}
-            </span>
+            {/* Rewind 10s Center Button */}
+            <button
+              onClick={() => seekRelative(-10)}
+              className="w-14 h-14 rounded-full bg-black/60 hover:bg-black/80 active:scale-90 text-white flex flex-col items-center justify-center border border-white/20 backdrop-blur-md shadow-2xl transition-all"
+              title="Reculer de 10s"
+            >
+              <span className="text-xl">⏪</span>
+              <span className="text-[10px] font-bold mt-0.5">-10s</span>
+            </button>
+
+            {/* Play / Pause Center Button */}
+            <button
+              onClick={togglePlay}
+              className="w-18 h-18 rounded-full bg-mv-accent/90 hover:bg-mv-accent active:scale-90 text-white flex items-center justify-center shadow-[0_0_30px_rgba(139,92,246,0.6)] border-2 border-white/30 backdrop-blur-md transition-all"
+              title={isPlaying ? 'Mettre en pause' : 'Reprendre la lecture'}
+            >
+              <span className="text-3xl ml-1">
+                {isPlaying ? '⏸' : '▶'}
+              </span>
+            </button>
+
+            {/* Fast-forward 10s Center Button */}
+            <button
+              onClick={() => seekRelative(10)}
+              className="w-14 h-14 rounded-full bg-black/60 hover:bg-black/80 active:scale-90 text-white flex flex-col items-center justify-center border border-white/20 backdrop-blur-md shadow-2xl transition-all"
+              title="Avancer de 10s"
+            >
+              <span className="text-xl">⏩</span>
+              <span className="text-[10px] font-bold mt-0.5">+10s</span>
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -324,9 +361,9 @@ export const ReelItem: React.FC<ReelItemProps> = ({
       <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/70 via-black/30 to-transparent pointer-events-none z-10" />
       <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/90 via-black/50 to-transparent pointer-events-none z-10" />
 
-      {/* Right Action Sidebar (TikTok style) */}
+      {/* Right Action Sidebar (TikTok style) - elevated above BottomNav */}
       <div
-        className="absolute right-3 bottom-24 z-20 flex flex-col items-center gap-4"
+        className="absolute right-3 bottom-[calc(84px+env(safe-area-inset-bottom,0px))] md:bottom-20 z-20 flex flex-col items-center gap-3.5"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Like Button */}
@@ -335,12 +372,12 @@ export const ReelItem: React.FC<ReelItemProps> = ({
           className="flex flex-col items-center group"
           title="Favori"
         >
-          <div className="w-12 h-12 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center border border-white/10 group-hover:scale-110 group-active:scale-95 transition-all">
+          <div className="w-11 h-11 rounded-full bg-black/50 backdrop-blur-md flex items-center justify-center border border-white/15 group-hover:scale-110 group-active:scale-95 transition-all shadow-lg">
             <span className={`text-2xl ${media.is_favorite ? 'scale-110' : ''}`}>
               {media.is_favorite ? '❤️' : '🤍'}
             </span>
           </div>
-          <span className="text-[11px] font-semibold text-white/90 mt-1 shadow-sm">
+          <span className="text-[11px] font-semibold text-white/90 mt-1 drop-shadow-md">
             {media.is_favorite ? 'Liké' : 'Like'}
           </span>
         </button>
@@ -352,12 +389,12 @@ export const ReelItem: React.FC<ReelItemProps> = ({
             className="flex flex-col items-center group"
             title={isMuted ? 'Activer le son' : 'Couper le son'}
           >
-            <div className="w-12 h-12 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center border border-white/10 group-hover:scale-110 group-active:scale-95 transition-all">
+            <div className="w-11 h-11 rounded-full bg-black/50 backdrop-blur-md flex items-center justify-center border border-white/15 group-hover:scale-110 group-active:scale-95 transition-all shadow-lg">
               <span className="text-xl text-white">
                 {isMuted ? '🔇' : '🔊'}
               </span>
             </div>
-            <span className="text-[11px] font-semibold text-white/90 mt-1 shadow-sm">
+            <span className="text-[11px] font-semibold text-white/90 mt-1 drop-shadow-md">
               {isMuted ? 'Muet' : 'Son'}
             </span>
           </button>
@@ -369,12 +406,12 @@ export const ReelItem: React.FC<ReelItemProps> = ({
           className="flex flex-col items-center group"
           title="Bascule Zoom / Format"
         >
-          <div className="w-12 h-12 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center border border-white/10 group-hover:scale-110 group-active:scale-95 transition-all">
+          <div className="w-11 h-11 rounded-full bg-black/50 backdrop-blur-md flex items-center justify-center border border-white/15 group-hover:scale-110 group-active:scale-95 transition-all shadow-lg">
             <span className="text-xl text-white">
               {fitMode === 'cover' ? '🔍' : '↔️'}
             </span>
           </div>
-          <span className="text-[11px] font-semibold text-white/90 mt-1 shadow-sm">
+          <span className="text-[11px] font-semibold text-white/90 mt-1 drop-shadow-md">
             {fitMode === 'cover' ? 'Remplir' : 'Ajuster'}
           </span>
         </button>
@@ -385,10 +422,10 @@ export const ReelItem: React.FC<ReelItemProps> = ({
           className="flex flex-col items-center group"
           title="Détails"
         >
-          <div className="w-12 h-12 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center border border-white/10 group-hover:scale-110 group-active:scale-95 transition-all">
+          <div className="w-11 h-11 rounded-full bg-black/50 backdrop-blur-md flex items-center justify-center border border-white/15 group-hover:scale-110 group-active:scale-95 transition-all shadow-lg">
             <span className="text-xl text-white">ℹ️</span>
           </div>
-          <span className="text-[11px] font-semibold text-white/90 mt-1 shadow-sm">
+          <span className="text-[11px] font-semibold text-white/90 mt-1 drop-shadow-md">
             Infos
           </span>
         </button>
@@ -402,70 +439,71 @@ export const ReelItem: React.FC<ReelItemProps> = ({
           className="flex flex-col items-center group"
           title="Télécharger"
         >
-          <div className="w-12 h-12 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center border border-white/10 group-hover:scale-110 group-active:scale-95 transition-all">
+          <div className="w-11 h-11 rounded-full bg-black/50 backdrop-blur-md flex items-center justify-center border border-white/15 group-hover:scale-110 group-active:scale-95 transition-all shadow-lg">
             <span className="text-xl text-white">⬇️</span>
           </div>
-          <span className="text-[11px] font-semibold text-white/90 mt-1 shadow-sm">
+          <span className="text-[11px] font-semibold text-white/90 mt-1 drop-shadow-md">
             Sauver
           </span>
         </a>
       </div>
 
-      {/* Bottom Info Section & Quick Seek Buttons */}
+      {/* Bottom Info Section & Playback Controls - Elevated comfortably above BottomNav */}
       <div
-        className="absolute left-4 right-20 bottom-14 z-20 flex flex-col gap-1.5 text-white"
-        onClick={(e) => e.stopPropagation()}
+        className="absolute left-4 right-20 bottom-[calc(76px+env(safe-area-inset-bottom,0px))] md:bottom-7 z-20 flex flex-col gap-2 text-white pointer-events-none"
       >
-        <div className="flex items-center gap-2">
-          <span className="px-2 py-0.5 rounded-full bg-mv-accent/80 text-[10px] font-bold uppercase tracking-wider backdrop-blur-sm">
+        {/* Media Type & Metadata Tag */}
+        <div className="flex items-center gap-2 pointer-events-auto">
+          <span className="px-2 py-0.5 rounded-full bg-mv-accent/80 text-[10px] font-bold uppercase tracking-wider backdrop-blur-sm shadow">
             {media.media_type}
           </span>
           {media.width && media.height && (
-            <span className="text-[11px] text-white/70">
+            <span className="text-[11px] text-white/80 drop-shadow">
               {media.width}×{media.height}
             </span>
           )}
-          <span className="text-[11px] text-white/60">
+          <span className="text-[11px] text-white/70 drop-shadow">
             • {formatFileSize(media.file_size)}
           </span>
         </div>
 
-        <p className="text-sm font-semibold truncate text-white drop-shadow-md">
+        {/* Filename */}
+        <p className="text-sm font-semibold truncate text-white drop-shadow-md pointer-events-auto">
           {media.file_name}
         </p>
 
-        {/* Interactive Video Controls Row (Timer + 10s Skip Buttons) */}
+        {/* Ergonomic Video Controls Bar (⏪ -10s | Timestamp | +10s ⏩) */}
         {isVideo && (
-          <div className="flex items-center gap-3 pt-1">
-            {/* Timestamp Badge */}
-            <span className="text-xs font-mono font-semibold text-white/90 bg-black/50 px-2 py-0.5 rounded-md border border-white/10 backdrop-blur-sm">
-              {formatTime(currentTime)} / {formatTime(duration)}
-            </span>
-
-            {/* Rewind 10s */}
+          <div className="flex items-center gap-2 pt-0.5 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            {/* Rewind 10s Button */}
             <button
               onClick={() => seekRelative(-10)}
-              className="px-2.5 py-1 rounded-full bg-white/15 hover:bg-white/25 active:scale-95 text-xs font-semibold text-white backdrop-blur-sm transition-all flex items-center gap-1 shadow-sm"
+              className="h-8 px-3 rounded-full bg-black/60 hover:bg-black/80 active:scale-95 text-xs font-bold text-white border border-white/20 backdrop-blur-md transition-all flex items-center gap-1.5 shadow-lg active:bg-mv-accent"
               title="Reculer de 10s"
             >
-              <span>⏪</span>
+              <span className="text-xs">⏪</span>
               <span>-10s</span>
             </button>
 
-            {/* Fast Forward 10s */}
+            {/* Timestamp Badge */}
+            <span className="h-8 px-3 rounded-full bg-black/60 border border-white/20 backdrop-blur-md text-xs font-mono font-bold text-white flex items-center shadow-lg">
+              {formatTime(currentTime)} / {formatTime(duration)}
+            </span>
+
+            {/* Fast-Forward 10s Button */}
             <button
               onClick={() => seekRelative(10)}
-              className="px-2.5 py-1 rounded-full bg-white/15 hover:bg-white/25 active:scale-95 text-xs font-semibold text-white backdrop-blur-sm transition-all flex items-center gap-1 shadow-sm"
+              className="h-8 px-3 rounded-full bg-black/60 hover:bg-black/80 active:scale-95 text-xs font-bold text-white border border-white/20 backdrop-blur-md transition-all flex items-center gap-1.5 shadow-lg active:bg-mv-accent"
               title="Avancer de 10s"
             >
               <span>+10s</span>
-              <span>⏩</span>
+              <span className="text-xs">⏩</span>
             </button>
           </div>
         )}
       </div>
 
-      {/* Interactive Video Progress Bar Scrubber (Click & Drag / Touch) */}
+      {/* Prominent Video Progress Scrubber Bar - Directly above BottomNav, 100% visible */}
       {isVideo && (
         <div
           ref={scrubberRef}
@@ -477,19 +515,21 @@ export const ReelItem: React.FC<ReelItemProps> = ({
           onTouchStart={handleScrubTouchStart}
           onTouchMove={handleScrubTouchMove}
           onTouchEnd={handleScrubTouchEnd}
-          className="absolute bottom-0 left-0 right-0 h-7 z-30 flex items-end cursor-pointer group px-0 pb-1"
+          className="absolute bottom-[calc(60px+env(safe-area-inset-bottom,0px))] md:bottom-0 left-0 right-0 h-7 z-30 flex items-center cursor-pointer group px-0"
         >
-          {/* Scrubber Background Bar */}
-          <div className="relative w-full h-1.5 group-hover:h-3 transition-all duration-150 bg-white/25 backdrop-blur-sm overflow-visible">
-            {/* Filled Progress Bar */}
+          {/* Background Scrubber Track */}
+          <div className="relative w-full h-1.5 group-hover:h-3 transition-all duration-150 bg-white/30 backdrop-blur-md overflow-visible">
+            {/* Glowing Filled Progress Bar */}
             <div
-              className="h-full bg-mv-accent relative transition-all duration-75"
+              className="h-full bg-gradient-to-r from-violet-500 via-purple-500 to-pink-500 relative transition-all duration-75 shadow-[0_0_12px_rgba(168,85,247,0.9)]"
               style={{ width: `${progress}%` }}
             >
-              {/* Scrubbing Thumb Dot */}
+              {/* Scrubbing Thumb Circle */}
               <div
-                className={`absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 rounded-full bg-white shadow-lg border border-mv-accent transition-transform ${
-                  isScrubbing ? 'scale-125' : 'group-hover:scale-110'
+                className={`absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 rounded-full bg-white shadow-xl border-2 border-violet-500 transition-all ${
+                  isScrubbing
+                    ? 'w-5 h-5 scale-110 ring-4 ring-violet-500/40'
+                    : 'w-3 h-3 group-hover:w-4 group-hover:h-4'
                 }`}
               />
             </div>
@@ -497,10 +537,10 @@ export const ReelItem: React.FC<ReelItemProps> = ({
             {/* Floating Time Tooltip while scrubbing */}
             {isScrubbing && (
               <div
-                className="absolute -top-7 -translate-x-1/2 bg-black/90 text-white font-mono text-[10px] px-2 py-0.5 rounded border border-white/20 pointer-events-none shadow-xl"
-                style={{ left: `${progress}%` }}
+                className="absolute -top-9 -translate-x-1/2 bg-black/90 text-white font-mono text-xs font-bold px-2.5 py-1 rounded-md border border-white/25 pointer-events-none shadow-2xl backdrop-blur-md"
+                style={{ left: `${Math.min(88, Math.max(12, progress))}%` }}
               >
-                {formatTime(currentTime)}
+                {formatTime(currentTime)} / {formatTime(duration)}
               </div>
             )}
           </div>
@@ -514,7 +554,7 @@ export const ReelItem: React.FC<ReelItemProps> = ({
             initial={{ opacity: 0, y: 100 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 100 }}
-            className="absolute bottom-12 inset-x-4 max-w-md mx-auto z-40 bg-mv-surface/95 backdrop-blur-xl border border-mv-border p-4 rounded-2xl text-mv-text shadow-2xl"
+            className="absolute bottom-16 inset-x-4 max-w-md mx-auto z-40 bg-mv-surface/95 backdrop-blur-xl border border-mv-border p-4 rounded-2xl text-mv-text shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-between items-center mb-3">
