@@ -40,10 +40,15 @@ Inspirée du meilleur des réseaux sociaux modernes :
 - **Scroll Snap Vertical** : Chaque média occupe 100% de la hauteur avec transition fluide.
 - **Autoplay Dynamique** : La vidéo démarre à l'écran et se met en pause dès que vous faites défiler la page.
 - **Contrôles gestuels** :
-  - Double-tap pour liker ❤️ avec animation pop.
+  - Double-tap au centre pour liker ❤️ (sans mettre la vidéo en pause), à gauche / à droite pour reculer / avancer de 5s.
   - Simple tap pour Play/Pause ⏸.
   - Bouton Fit/Zoom (↔️ / 🔍) pour basculer entre mode plein écran rogné ou centré.
-  - Mémoire de volume globale (activez le son une fois, il reste actif pour les vidéos suivantes).
+  - Mémoire du son : activez-le une fois, il reste actif pour les vidéos suivantes et au prochain lancement.
+- **Filtres** : 📱 Verticales (format portrait uniquement), 🎬 Toutes les vidéos, 🌐 Photos + vidéos.
+- **Mode aléatoire 🔀** : ordre mélangé, stable pendant le défilement.
+- **Cadrage automatique** : une vidéo verticale remplit l'écran d'un téléphone, une vidéo horizontale est affichée en entier.
+- **Léger sur iPhone** : seuls la vidéo affichée et ses deux voisines sont chargées ; la suivante est préchargée pour un swipe instantané.
+- **Vidéos de téléphone** : l'orientation est lue depuis les métadonnées de rotation (les vidéos déjà indexées sont réanalysées une fois au démarrage).
 - **Barre latérale d'actions** : Accès rapide aux infos de résolution, durée, poids, bouton favoris et téléchargement direct.
 
 ### 🖼️ 2. Feed Grille Moderne (Instagram-Style)

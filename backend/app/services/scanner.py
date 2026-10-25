@@ -222,3 +222,50 @@ async def scan_media_directory(folder_id: int | None = None) -> dict:
         total,
     )
     return {"new_files": new_files, "removed_entries": removed_entries, "total": total}
+
+
+# Bumped whenever video metadata extraction changes (v2 = rotation-aware).
+VIDEO_META_VERSION = 2
+_SHAPE_TAGS = ("vertical", "widescreen", "hd", "4k", "short")
+
+
+async def refresh_video_metadata(force: bool = False) -> int:
+    """Re-read width/height/duration of already indexed videos, once per metadata version.
+
+    Older versions ignored the rotation flag of phone videos, so vertical clips were
+    stored as landscape. Their shape tags are recomputed too. Returns videos updated.
+    """
+    marker = settings.data_path / f".video_meta_v{VIDEO_META_VERSION}"
+    if marker.exists() and not force:
+        return 0
+
+    from sqlalchemy import delete
+
+    from app.models import MediaTag, Tag
+
+    updated = 0
+    async with async_session() as session:
+        videos = (await session.execute(select(Media).where(Media.media_type == "video"))).scalars().all()
+        shape_tag_ids = [
+            t.id for t in (await session.execute(select(Tag).where(Tag.name.in_(_SHAPE_TAGS)))).scalars().all()
+        ]
+        for media in videos:
+            path = Path(media.file_path)
+            if not path.exists():
+                continue
+            meta = await get_video_metadata(path)
+            new_dims = (meta.get("width"), meta.get("height"), meta.get("duration"))
+            if new_dims == (media.width, media.height, media.duration):
+                continue
+            media.width, media.height, media.duration = new_dims
+            if shape_tag_ids:
+                await session.execute(
+                    delete(MediaTag).where(MediaTag.media_id == media.id, MediaTag.tag_id.in_(shape_tag_ids))
+                )
+            await auto_tag_media(session, media)  # commits
+            updated += 1
+        await session.commit()
+
+    marker.touch()
+    logger.info("Video metadata refresh done — %d video(s) corrected", updated)
+    return updated

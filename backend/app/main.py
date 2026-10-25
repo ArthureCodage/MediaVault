@@ -23,7 +23,7 @@ from app.routers import libraries as libraries_router
 from app.routers import media as media_router
 from app.routers.tags import router as tags_router, media_tags_router
 from app.services.notifier import manager
-from app.services.scanner import scan_media_directory
+from app.services.scanner import refresh_video_metadata, scan_media_directory
 from app.services.watcher import library_watcher
 
 logging.basicConfig(
@@ -80,6 +80,11 @@ async def _initial_scan() -> None:
         )
     except Exception:
         logger.exception("Initial scan failed")
+
+    try:
+        await refresh_video_metadata()
+    except Exception:
+        logger.exception("Video metadata refresh failed")
 
 
 app = FastAPI(

@@ -6,9 +6,24 @@ import { getFileUrl, getThumbnailUrl } from '../../api/client';
 interface ReelItemProps {
   media: Media;
   isActive: boolean;
+  /** Within the mount window: render a real <video>; otherwise only the poster image */
+  isNear: boolean;
+  /** Next reel after the active one: buffer it so the swipe starts instantly */
+  preloadNext: boolean;
   isMuted: boolean;
   onToggleMute: () => void;
+  /** Browser refused autoplay with sound and the video fell back to muted */
+  onAutoplayMuted: () => void;
   onToggleFavorite: (uuid: string) => void;
+}
+
+const DOUBLE_TAP_DELAY = 250;
+
+/** Portrait media on a portrait screen fills it (TikTok style); anything else is shown whole. */
+function defaultFit(media: Media): 'contain' | 'cover' {
+  const portraitMedia = !!media.width && !!media.height && media.height > media.width;
+  const portraitScreen = typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches;
+  return portraitMedia && portraitScreen ? 'cover' : 'contain';
 }
 
 function formatTime(seconds: number): string {
@@ -21,8 +36,11 @@ function formatTime(seconds: number): string {
 export const ReelItem: React.FC<ReelItemProps> = ({
   media,
   isActive,
+  isNear,
+  preloadNext,
   isMuted,
   onToggleMute,
+  onAutoplayMuted,
   onToggleFavorite,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -38,9 +56,19 @@ export const ReelItem: React.FC<ReelItemProps> = ({
   const [showCenterControls, setShowCenterControls] = useState(false);
   const [seekFeedback, setSeekFeedback] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
-  const [fitMode, setFitMode] = useState<'contain' | 'cover'>('contain');
+  const [fitMode, setFitMode] = useState<'contain' | 'cover'>(() => defaultFit(media));
 
   const lastTapRef = useRef<{ time: number; x: number }>({ time: 0, x: 0 });
+  const singleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
+
+  useEffect(
+    () => () => {
+      if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
+    },
+    [],
+  );
 
   const fileUrl = getFileUrl(media.uuid);
   const thumbUrl = getThumbnailUrl(media.uuid);
@@ -60,8 +88,12 @@ export const ReelItem: React.FC<ReelItemProps> = ({
             setIsPlaying(true);
             setShowCenterControls(false);
           })
-          .catch(() => {
+          .catch((err: DOMException) => {
+            // AbortError = paused/scrolled away before playback started: nothing to do.
+            // Only NotAllowedError means autoplay with sound was blocked (iOS/Chrome policy).
+            if (err?.name !== 'NotAllowedError' || !isActiveRef.current) return;
             video.muted = true;
+            if (!isMuted) onAutoplayMuted();
             video.play()
               .then(() => {
                 setIsPlaying(true);
@@ -78,7 +110,8 @@ export const ReelItem: React.FC<ReelItemProps> = ({
       setProgress(0);
       setCurrentTime(0);
     }
-  }, [isActive, isVideo]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, isVideo, isNear]);
 
   // Keep muted in sync
   useEffect(() => {
@@ -120,7 +153,7 @@ export const ReelItem: React.FC<ReelItemProps> = ({
     const video = videoRef.current;
     if (!video) return;
     if (video.paused) {
-      video.play();
+      video.play().catch(() => setIsPlaying(false));
       setIsPlaying(true);
       setShowCenterControls(false);
     } else {
@@ -159,10 +192,13 @@ export const ReelItem: React.FC<ReelItemProps> = ({
       const clickX = e.clientX - rect.left;
       const width = rect.width;
       const now = Date.now();
-      const DOUBLE_TAP_DELAY = 300;
 
       if (now - lastTapRef.current.time < DOUBLE_TAP_DELAY) {
-        // Double Tap detected!
+        // Double tap: cancel the pending single-tap play/pause so liking doesn't pause the video
+        if (singleTapTimerRef.current) {
+          clearTimeout(singleTapTimerRef.current);
+          singleTapTimerRef.current = null;
+        }
         if (clickX < width * 0.35 && isVideo) {
           seekRelative(-5);
         } else if (clickX > width * 0.65 && isVideo) {
@@ -178,9 +214,13 @@ export const ReelItem: React.FC<ReelItemProps> = ({
       } else {
         lastTapRef.current = { time: now, x: clickX };
 
-        // Single tap → Toggle play/pause & show center HUD
+        // Single tap → play/pause, but only once we know no second tap follows
         if (isVideo) {
-          togglePlay();
+          if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
+          singleTapTimerRef.current = setTimeout(() => {
+            singleTapTimerRef.current = null;
+            togglePlay();
+          }, DOUBLE_TAP_DELAY);
         }
       }
     },
@@ -254,14 +294,14 @@ export const ReelItem: React.FC<ReelItemProps> = ({
       onClick={handleScreenClick}
     >
       {/* Video or Image Element */}
-      {isVideo ? (
+      {isVideo && isNear ? (
         <video
           ref={videoRef}
           src={fileUrl}
           poster={thumbUrl}
           playsInline
           loop
-          preload={isActive ? 'auto' : 'metadata'}
+          preload={isActive || preloadNext ? 'auto' : 'metadata'}
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={() => {
             if (videoRef.current?.duration) {
@@ -271,6 +311,14 @@ export const ReelItem: React.FC<ReelItemProps> = ({
           className={`w-full h-full ${
             fitMode === 'cover' ? 'object-cover' : 'object-contain'
           } transition-all duration-200`}
+        />
+      ) : isVideo || media.media_type === 'text' ? (
+        // Far-away video (not mounted yet) or text note: lightweight thumbnail only
+        <img
+          src={thumbUrl}
+          alt={media.file_name}
+          className={`w-full h-full ${fitMode === 'cover' ? 'object-cover' : 'object-contain'}`}
+          loading="lazy"
         />
       ) : (
         <img
@@ -320,7 +368,7 @@ export const ReelItem: React.FC<ReelItemProps> = ({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.85 }}
             transition={{ duration: 0.15 }}
-            className="absolute z-25 flex items-center justify-center gap-6 pointer-events-auto"
+            className="absolute z-[25] flex items-center justify-center gap-6 pointer-events-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Rewind 10s Center Button */}
@@ -336,7 +384,7 @@ export const ReelItem: React.FC<ReelItemProps> = ({
             {/* Play / Pause Center Button */}
             <button
               onClick={togglePlay}
-              className="w-18 h-18 rounded-full bg-mv-accent/90 hover:bg-mv-accent active:scale-90 text-white flex items-center justify-center shadow-[0_0_30px_rgba(139,92,246,0.6)] border-2 border-white/30 backdrop-blur-md transition-all"
+              className="w-[72px] h-[72px] rounded-full bg-mv-accent/90 hover:bg-mv-accent active:scale-90 text-white flex items-center justify-center shadow-[0_0_30px_rgba(139,92,246,0.6)] border-2 border-white/30 backdrop-blur-md transition-all"
               title={isPlaying ? 'Mettre en pause' : 'Reprendre la lecture'}
             >
               <span className="text-3xl ml-1">

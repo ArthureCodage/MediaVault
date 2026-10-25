@@ -35,6 +35,8 @@ export interface MediaQueryParams {
   tag_id?: number | null;
   album_id?: number | null;
   sort?: string;
+  seed?: number;
+  orientation?: 'portrait' | 'landscape';
   favorite?: boolean | string;
   q?: string;
 }

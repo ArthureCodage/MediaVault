@@ -80,3 +80,28 @@ def test_websocket_requires_token(client, auth):
     token = auth["Authorization"].split()[1]
     with client.websocket_connect(f"/api/ws?token={token}"):
         pass
+
+
+def test_orientation_filter(client, auth):
+    client.post("/api/media/upload", headers=auth, files={"file": ("wide.png", _png(200, 50), "image/png")})
+    portrait = client.get("/api/media?orientation=portrait&per_page=200", headers=auth).json()["items"]
+    landscape = client.get("/api/media?orientation=landscape&per_page=200", headers=auth).json()["items"]
+    assert portrait and all(m["height"] > m["width"] for m in portrait)
+    assert [m["file_name"] for m in landscape] == ["wide.png"]
+
+
+def test_multiple_types_filter(client, auth):
+    r = client.get("/api/media?type=image,video", headers=auth)
+    assert r.status_code == 200 and all(m["media_type"] in ("image", "video") for m in r.json()["items"])
+
+
+def test_random_sort_is_stable_per_seed_and_paginates(client, auth):
+    def page(n, seed):
+        return [m["uuid"] for m in client.get(
+            f"/api/media?sort=random&seed={seed}&per_page=2&page={n}", headers=auth).json()["items"]]
+
+    total = client.get("/api/media", headers=auth).json()["total"]
+    first = page(1, 42)
+    assert first == page(1, 42)
+    seen = [u for n in range(1, total // 2 + 2) for u in page(n, 42)]
+    assert len(seen) == len(set(seen)) == total

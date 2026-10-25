@@ -76,7 +76,9 @@ async def list_media(
     folder_id: int | None = Query(None),
     tag_id: int | None = Query(None),
     album_id: int | None = Query(None),
-    sort: str = Query("date_desc"),
+    sort: str = Query("date_desc", description="date_desc, date_asc, name_*, size_* or random"),
+    seed: int = Query(0, description="Shuffle seed for sort=random (same seed = same order across pages)"),
+    orientation: str | None = Query(None, pattern="^(portrait|landscape)$"),
     favorite: bool | None = Query(None),
     q: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -93,7 +95,12 @@ async def list_media(
     if folder_id is not None:
         stmt = stmt.where(Media.folder_id == folder_id)
     if type:
-        stmt = stmt.where(Media.media_type == type)
+        types = [t.strip() for t in type.split(",") if t.strip()]
+        stmt = stmt.where(Media.media_type.in_(types))
+    if orientation == "portrait":
+        stmt = stmt.where(Media.width.is_not(None), Media.height > Media.width)
+    elif orientation == "landscape":
+        stmt = stmt.where(Media.width.is_not(None), Media.width >= Media.height)
     if favorite is not None:
         stmt = stmt.where(Media.is_favorite == favorite)
     if q:
@@ -104,8 +111,13 @@ async def list_media(
     total = (await db.execute(count_stmt)).scalar_one()
 
     # Sorting
-    order = SORT_MAP.get(sort, Media.file_date.desc())
-    stmt = stmt.order_by(order)
+    if sort == "random":
+        # Deterministic shuffle: a cheap hash of the id mixed with the seed keeps
+        # pagination stable (no duplicates/missing items between pages).
+        mixed = (Media.id * 2654435761 + (seed % 2147483647) * 40503) % 4294967291
+        stmt = stmt.order_by(mixed, Media.id)
+    else:
+        stmt = stmt.order_by(SORT_MAP.get(sort, Media.file_date.desc()), Media.id)
 
     # Pagination
     offset = (page - 1) * per_page
