@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build:
@@ -11,12 +9,13 @@ services:
     environment:
       - MEDIA_DIR=/media
       - DATA_DIR=/data
-      - APP_USERNAME=admin
-      - APP_PASSWORD=admin
-      - SECRET_KEY=replace-with-a-secure-random-secret-key
+      - APP_USERNAME=${APP_USERNAME:-admin}
+      - APP_PASSWORD=${APP_PASSWORD:?Définissez APP_PASSWORD dans un fichier .env à côté de docker-compose.yml}
+      - SECRET_KEY=${SECRET_KEY:?Définissez SECRET_KEY dans un fichier .env à côté de docker-compose.yml}
     volumes:
       - ./data:/data
-      - /path/to/your/media:/media:ro
+      # Lecture seule : l'upload depuis l'appli est alors désactivé (retirez :ro pour l'autoriser)
+      - ${MEDIA_PATH:-./media}:/media:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/"]
       interval: 30s

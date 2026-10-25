@@ -9,10 +9,11 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
+from app.auth import verify_token
 from app.config import settings
 from app.database import async_session, init_db
 from app.models import LibraryFolder
@@ -38,6 +39,8 @@ async def lifespan(app: FastAPI):
     # ── Startup ──
     logger.info("DATA_DIR  : %s", settings.data_path)
     logger.info("MEDIA_DIR : %s", settings.media_path)
+    for name in settings.insecure_defaults:
+        logger.warning("⚠ %s utilise encore la valeur par défaut — changez-la dans backend/.env", name)
 
     # Ensure directories exist
     settings.data_path.mkdir(parents=True, exist_ok=True)
@@ -105,8 +108,11 @@ app.include_router(albums_router.router)
 
 
 @app.websocket("/api/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """Real-time event stream for library changes."""
+async def websocket_endpoint(websocket: WebSocket, token: str | None = None):
+    """Real-time event stream for library changes (requires ?token=<jwt>)."""
+    if verify_token(token) is None:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
     await manager.connect(websocket)
     try:
         while True:

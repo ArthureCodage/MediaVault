@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Timer
+from typing import Any
 
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
 from watchdog.observers import Observer
@@ -19,6 +20,7 @@ from sqlalchemy import select
 from app.database import async_session
 from app.models import LibraryFolder, Media
 from app.services.auto_tagger import auto_tag_media
+from app.services.media_ops import purge_media
 from app.services.notifier import manager
 from app.services.scanner import _classify, ALL_EXTENSIONS, _extract_image_dimensions
 from app.services.thumbnail import generate_thumbnail, get_video_metadata
@@ -54,6 +56,16 @@ class MediaEventHandler(FileSystemEventHandler):
             self._pending_files[file_path].cancel()
             del self._pending_files[file_path]
         asyncio.run_coroutine_threadsafe(self._handle_deleted(file_path), self.loop)
+
+    def on_moved(self, event: FileSystemEvent):
+        """Renames/moves: drop the old entry, index the new path."""
+        if event.is_directory:
+            return
+        old_path = str(Path(event.src_path).resolve())
+        if old_path in self._pending_files:
+            self._pending_files.pop(old_path).cancel()
+        asyncio.run_coroutine_threadsafe(self._handle_deleted(old_path), self.loop)
+        self._schedule_process(event.dest_path)
 
     def _schedule_process(self, path_str: str):
         resolved = str(Path(path_str).resolve())
@@ -161,7 +173,7 @@ class MediaEventHandler(FileSystemEventHandler):
 
             if existing:
                 uuid = existing.uuid
-                await session.delete(existing)
+                await purge_media(session, existing)
                 await session.commit()
                 logger.info("Real-time Watcher purged deleted file: %s", path_str)
 

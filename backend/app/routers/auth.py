@@ -2,6 +2,8 @@
 Auth router — login and current-user endpoints.
 """
 
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.auth import create_access_token, get_current_user
@@ -14,8 +16,10 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest) -> TokenResponse:
     """Authenticate with username + password and receive a JWT."""
-    username_match = body.username.strip().lower() == settings.APP_USERNAME.strip().lower()
-    password_match = body.password == settings.APP_PASSWORD
+    username_match = secrets.compare_digest(
+        body.username.strip().lower().encode(), settings.APP_USERNAME.strip().lower().encode()
+    )
+    password_match = secrets.compare_digest(body.password.encode(), settings.APP_PASSWORD.encode())
     if not (username_match and password_match):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -47,3 +47,13 @@ async def init_db() -> None:
         col_names = [row[1] for row in columns.fetchall()]
         if "folder_id" not in col_names:
             await conn.execute(text("ALTER TABLE media ADD COLUMN folder_id INTEGER"))
+
+    # Remove tag/album links left behind by older versions that deleted media rows alone
+    from app.services.media_ops import cleanup_orphan_links
+
+    async with async_session() as session:
+        removed = await cleanup_orphan_links(session)
+        await session.commit()
+        if removed:
+            import logging
+            logging.getLogger(__name__).info("Removed %d orphan tag/album links", removed)

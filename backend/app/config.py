@@ -34,6 +34,17 @@ class Settings(BaseSettings):
     # --- derived helpers (not env vars) ---
 
     @property
+    def insecure_defaults(self) -> list[str]:
+        """Names of security settings still left at their public default values."""
+        issues = []
+        if self.SECRET_KEY in {"mediavault-super-secret-key-change-me", "change-this-secret-key-12345",
+                               "replace-with-a-secure-random-secret-key"} or len(self.SECRET_KEY) < 16:
+            issues.append("SECRET_KEY")
+        if self.APP_PASSWORD in {"admin", "password", "changeme"}:
+            issues.append("APP_PASSWORD")
+        return issues
+
+    @property
     def data_path(self) -> Path:
         """Return DATA_DIR as a Path, creating it if needed."""
         p = Path(self.DATA_DIR)

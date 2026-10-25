@@ -177,8 +177,16 @@ async def get_video_metadata(file_path: Path) -> dict:
             # 2. Parse Video resolution: Stream #... Video: ... 1920x1080
             res_match = re.search(r"Video:.*?,\s*(\d{2,5})x(\d{2,5})", output)
             if res_match:
-                result["width"] = int(res_match.group(1))
-                result["height"] = int(res_match.group(2))
+                w, h = int(res_match.group(1)), int(res_match.group(2))
+                # Phone videos are often stored landscape with a rotation flag:
+                # swap so vertical clips are detected as vertical (Reels, #vertical tag).
+                rot_match = re.search(r"rotation of (-?\d+(?:\.\d+)?) degrees", output) or re.search(
+                    r"rotate\s*:\s*(-?\d+)", output
+                )
+                if rot_match and round(abs(float(rot_match.group(1)))) % 180 == 90:
+                    w, h = h, w
+                result["width"] = w
+                result["height"] = h
 
         except Exception as e:
             logger.warning("Error reading video metadata for %s: %s", file_path, e)

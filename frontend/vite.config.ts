@@ -36,10 +36,13 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         runtimeCaching: [
           {
-            urlPattern: /^http:\/\/localhost:8000\/api\/media\/.*\/thumbnail/,
+            // Any host (localhost, LAN IP, Tailscale) — not only localhost
+            urlPattern: /\/api\/media\/[^/]+\/thumbnail/,
             handler: 'CacheFirst',
             options: {
               cacheName: 'media-thumbnails',
+              // <img> requests to the API port are cross-origin (opaque, status 0)
+              cacheableResponse: { statuses: [0, 200] },
               expiration: {
                 maxEntries: 500,
                 maxAgeSeconds: 60 * 60 * 24 * 7,

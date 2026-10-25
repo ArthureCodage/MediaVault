@@ -25,6 +25,20 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
+def verify_token(token: str | None) -> str | None:
+    """Return the username if *token* is a valid JWT for the configured user, else None."""
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        return None
+    username = payload.get("sub")
+    if not username or username.lower() != settings.APP_USERNAME.lower():
+        return None
+    return username
+
+
 async def get_current_user(
     header_token: str | None = Depends(oauth2_scheme),
     query_token: str | None = Query(None, alias="token"),

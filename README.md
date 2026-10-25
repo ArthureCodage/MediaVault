@@ -157,6 +157,8 @@ APP_USERNAME=admin                    # Votre identifiant
 APP_PASSWORD=admin                    # Votre mot de passe
 ```
 
+> ⚠️ **Changez `SECRET_KEY` et `APP_PASSWORD`** avant d'exposer l'appli (Tailscale, réseau local). Le backend affiche un avertissement au démarrage tant qu'ils gardent leur valeur par défaut. Pour générer une clé : `python -c "import secrets; print(secrets.token_urlsafe(32))"`
+
 Lancez le backend :
 ```bash
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
@@ -172,6 +174,26 @@ npm run dev -- --host 0.0.0.0
 ### 4. Démarrage en 1 clic (Windows)
 Double-cliquez simplement sur **`start-all.bat`** à la racine pour lancer automatiquement le serveur backend et l'interface frontend !
 
+### 5. Avec Docker (Linux / homelab)
+Créez un fichier `.env` à la racine (à côté de `docker-compose.yml`) :
+```ini
+APP_PASSWORD=un-vrai-mot-de-passe
+SECRET_KEY=une-longue-cle-aleatoire
+MEDIA_PATH=/chemin/vers/vos/medias
+```
+Puis :
+```bash
+docker compose up -d --build
+```
+Le frontend est servi sur le port `5173`, l'API sur `8000`. Les médias sont montés en lecture seule (retirez `:ro` dans `docker-compose.yml` pour autoriser l'upload).
+
+### 6. Tests
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest -q tests
+```
+
 ---
 
 ## 📱 Accès Mobile & Tailscale
@@ -184,7 +206,7 @@ Pour accéder à MediaVault partout depuis votre iPhone ou smartphone :
    http://<VOTRE-IP-TAILSCALE>:5173
    # ou http://192.168.2.10:5173 en réseau local
    ```
-3. Connectez-vous avec vos identifiants (`admin` / `admin`).
+3. Connectez-vous avec les identifiants définis dans `backend/.env`.
 4. Dans Safari, appuyez sur le bouton **Partager** (carré avec flèche vers le haut) et sélectionnez **"Sur l'écran d'accueil"**.
 5. MediaVault s'ouvre désormais en plein écran comme une véritable application native iOS !
 

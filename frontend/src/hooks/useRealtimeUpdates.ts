@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { API_BASE_URL } from '../api/client';
+import { useAuthStore } from '../stores/authStore';
 
 export function useRealtimeUpdates() {
   const queryClient = useQueryClient();
@@ -10,9 +12,10 @@ export function useRealtimeUpdates() {
     let isMounted = true;
 
     function connect() {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.hostname;
-      const wsUrl = `${protocol}//${host}:8000/api/ws`;
+      const token = useAuthStore.getState().token;
+      if (!token) return;
+      // Same host as the REST API (honours VITE_API_URL), http→ws / https→wss
+      const wsUrl = `${API_BASE_URL.replace(/^http/, 'ws')}/api/ws?token=${encodeURIComponent(token)}`;
 
       try {
         const ws = new WebSocket(wsUrl);

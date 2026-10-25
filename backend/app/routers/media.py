@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
-from app.models import AlbumMedia, Media, MediaTag, Tag
+from app.models import AlbumMedia, LibraryFolder, Media, MediaTag, Tag
 from app.schemas import (
     DeleteResponse,
     FavoriteResponse,
@@ -25,6 +25,9 @@ from app.schemas import (
     TagOut,
 )
 from app.services.scanner import scan_media_directory, _classify, ALL_EXTENSIONS
+from app.services.auto_tagger import auto_tag_media
+from app.services.media_ops import purge_media
+from app.services.notifier import manager
 from app.services.thumbnail import generate_thumbnail, get_video_metadata
 
 router = APIRouter(prefix="/api/media", tags=["media"])
@@ -199,18 +202,23 @@ async def upload_file(
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No filename provided")
 
-    ext = Path(file.filename).suffix.lower()
+    # Keep only the base name: "../../evil.jpg" or "C:\x\y.jpg" must not escape MEDIA_DIR
+    safe_name = Path(file.filename.replace("\\", "/")).name.strip()
+    if not safe_name or safe_name.startswith("."):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename")
+
+    ext = Path(safe_name).suffix.lower()
     if ext not in ALL_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported file extension: {ext}",
         )
 
-    dest = settings.media_path / file.filename
+    dest = settings.media_path / safe_name
     # Avoid overwriting existing files — append a counter
+    stem = Path(safe_name).stem
     counter = 1
     while dest.exists():
-        stem = Path(file.filename).stem
         dest = settings.media_path / f"{stem}_{counter}{ext}"
         counter += 1
 
@@ -236,7 +244,12 @@ async def upload_file(
         height = meta.get("height")
         duration = meta.get("duration")
 
+    library = (
+        await db.execute(select(LibraryFolder).where(LibraryFolder.path == str(settings.media_path)))
+    ).scalars().first()
+
     entry = Media(
+        folder_id=library.id if library else None,
         file_path=str(dest.resolve()),
         file_name=dest.name,
         media_type=media_type,
@@ -256,6 +269,11 @@ async def upload_file(
         entry.thumbnail_path = thumb
 
     await db.flush()
+    await auto_tag_media(db, entry)
+    await manager.broadcast(
+        "MEDIA_ADDED",
+        {"uuid": entry.uuid, "file_name": entry.file_name, "media_type": entry.media_type, "folder_id": entry.folder_id},
+    )
     return _media_to_out(entry)
 
 
@@ -270,18 +288,15 @@ async def delete_media(
     media = await _get_or_404(db, uuid)
     file_deleted = False
 
-    # Remove thumbnail if present
-    if media.thumbnail_path:
-        Path(media.thumbnail_path).unlink(missing_ok=True)
-
     if delete_file:
         path = Path(media.file_path)
         if path.exists():
             path.unlink()
             file_deleted = True
 
-    await db.delete(media)
+    await purge_media(db, media)
     await db.flush()
+    await manager.broadcast("MEDIA_DELETED", {"uuid": uuid})
     return DeleteResponse(uuid=uuid, deleted=True, file_deleted=file_deleted)
 
 

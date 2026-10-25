@@ -11,7 +11,7 @@ import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from PIL import Image
@@ -20,6 +20,7 @@ from app.config import settings
 from app.database import async_session
 from app.models import LibraryFolder, Media
 from app.services.auto_tagger import auto_tag_media
+from app.services.media_ops import purge_media
 from app.services.thumbnail import generate_thumbnail, get_video_metadata
 
 logger = logging.getLogger(__name__)
@@ -138,7 +139,7 @@ async def scan_media_directory(folder_id: int | None = None) -> dict:
             if media.file_path not in disk_files:
                 # Double check disk directly
                 if not Path(media.file_path).exists():
-                    await session.delete(media)
+                    await purge_media(session, media)
                     removed_entries += 1
 
         await session.flush()
@@ -212,8 +213,7 @@ async def scan_media_directory(folder_id: int | None = None) -> dict:
         await session.commit()
 
         # Total count
-        total_result = await session.execute(select(Media))
-        total = len(total_result.scalars().all())
+        total = (await session.execute(select(func.count(Media.id)))).scalar_one()
 
     logger.info(
         "Scan complete — new: %d, removed: %d, total: %d",
